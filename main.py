@@ -5,7 +5,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 # ===== CONFIG =====
-# Agar Chrome kahin aur installed hai to ye path badlein
 CHROME_PATHS = [
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
@@ -18,7 +17,6 @@ def get_chrome_exe():
     for path in CHROME_PATHS:
         if os.path.exists(path):
             return path
-    # Try 'where chrome' as fallback
     try:
         result = subprocess.run(["where", "chrome"], capture_output=True, text=True, shell=True)
         if result.returncode == 0 and result.stdout.strip():
@@ -28,19 +26,27 @@ def get_chrome_exe():
     return None
 
 
-def get_chrome_profiles():
-    """User Data folder se saari Chrome profiles fetch karo (email ke saath)"""
+def is_valid_email(email):
+    """Check if email looks real (has @ and domain)"""
+    if not email or email == "—" or email == "N/A":
+        return False
+    return "@" in email and "." in email.split("@")[-1] if "@" in email else False
+
+
+def get_chrome_profiles(filter_working_only=True):
+    """User Data folder se saari Chrome profiles fetch karo (email ke saath).
+    Agar filter_working_only=True, to sirf wahi profiles return karo jinme valid email ho."""
     user_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
-    profiles = []
+    all_profiles = []
+    broken_profiles = []
 
     if not os.path.exists(user_data):
-        return profiles
+        return [], []
 
     for folder in sorted(os.listdir(user_data)):
         profile_path = os.path.join(user_data, folder)
         prefs_file = os.path.join(profile_path, "Preferences")
 
-        # Sirf folders lein (Default, Profile 1, Profile 2, ...)
         if not os.path.isdir(profile_path):
             continue
         if not folder.startswith(("Default", "Profile")):
@@ -48,7 +54,6 @@ def get_chrome_profiles():
         if not os.path.exists(prefs_file):
             continue
 
-        # Preferences JSON se email nikalo
         email = "—"
         display_name = ""
         try:
@@ -62,14 +67,24 @@ def get_chrome_profiles():
         except:
             pass
 
-        profiles.append({
+        # Check: Cookies file exist karta hai? (profile used hui hai)
+        cookies_exist = os.path.exists(os.path.join(profile_path, "Network", "Cookies"))
+
+        profile_data = {
             "folder": folder,
             "email": email,
             "display_name": display_name,
-            "path": profile_path
-        })
+            "path": profile_path,
+            "is_working": is_valid_email(email),
+            "has_cookies": cookies_exist,
+        }
 
-    return profiles
+        if is_valid_email(email):
+            all_profiles.append(profile_data)
+        else:
+            broken_profiles.append(profile_data)
+
+    return all_profiles, broken_profiles
 
 
 def open_profile(profile_folder):
@@ -88,7 +103,7 @@ def open_profile(profile_folder):
 def main():
     root = tk.Tk()
     root.title("Chrome Profile Launcher")
-    root.geometry("550x650")
+    root.geometry("600x700")
     root.configure(bg="#f0f0f0")
 
     # === Header ===
@@ -99,23 +114,29 @@ def main():
         font=("Segoe UI", 16, "bold"), fg="white", bg="#1a73e8"
     ).pack(pady=15)
 
-    # === Profile count ===
-    profiles = get_chrome_profiles()
+    # === Profile fetching ===
+    working, broken = get_chrome_profiles(filter_working_only=True)
+    total = len(working) + len(broken)
 
-    if not profiles:
+    if not working:
+        # No working profiles
         tk.Label(
-            root, text="❌ Koi Chrome profile nahi mili!",
+            root, text="❌ Koi working profile nahi mili!",
             font=("Segoe UI", 12), fg="red", bg="#f0f0f0"
         ).pack(pady=40)
         tk.Label(
-            root, text="Kya Chrome installed hai?",
+            root, text=f"Total profiles found: {total} | Working: 0",
             font=("Segoe UI", 10), fg="#666", bg="#f0f0f0"
         ).pack()
     else:
+        # === Stats bar ===
+        stats = tk.Frame(root, bg="#e8f0fe")
+        stats.pack(fill="x", padx=20, pady=(15, 5))
         tk.Label(
-            root, text=f"Found {len(profiles)} profile(s)",
-            font=("Segoe UI", 11), fg="#444", bg="#f0f0f0"
-        ).pack(pady=(15, 5))
+            stats,
+            text=f"✅ Working: {len(working)} profiles  |  ❌ Skipped: {len(broken)} (no login)  |  Total: {total} in folder",
+            font=("Segoe UI", 9), fg="#333", bg="#e8f0fe"
+        ).pack(pady=8)
 
         # === Scrollable area ===
         canvas = tk.Canvas(root, bg="#f0f0f0", highlightthickness=0)
@@ -128,60 +149,63 @@ def main():
         )
         canvas.create_window((0, 0), window=scroll_frame, anchor="nw", tags="frame")
 
-        # Canvas width track karo
         def on_canvas_configure(event):
             canvas.itemconfig("frame", width=event.width)
         canvas.bind("<Configure>", on_canvas_configure)
 
         canvas.configure(yscrollcommand=scrollbar.set)
 
-        # Mouse wheel scroll
         def on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         canvas.bind_all("<MouseWheel>", on_mousewheel)
 
         # === Profile cards ===
-        for i, p in enumerate(profiles):
-            card = tk.Frame(scroll_frame, bg="white", relief="flat", bd=0, highlightthickness=1,
-                          highlightbackground="#ddd", highlightcolor="#ddd")
-            card.pack(fill="x", padx=25, pady=6, ipady=5)
+        for i, p in enumerate(working):
+            card = tk.Frame(scroll_frame, bg="white", relief="flat", bd=0,
+                          highlightthickness=1, highlightbackground="#ddd")
+            card.pack(fill="x", padx=25, pady=5, ipady=4)
 
-            # Left: number + info
+            # Left: info
             left = tk.Frame(card, bg="white")
             left.pack(side="left", fill="both", expand=True, padx=12, pady=10)
 
-            # Profile number badge
-            badge = tk.Label(left, text=f"#{i+1}", font=("Segoe UI", 9, "bold"),
-                           fg="white", bg="#1a73e8", width=3, height=1)
-            badge.pack(side="left", padx=(0, 10))
+            # Green dot + number
+            badge_frame = tk.Frame(left, bg="white")
+            badge_frame.pack(side="left", padx=(0, 8))
 
-            # Name + email
+            dot = tk.Label(badge_frame, text="●", font=("Segoe UI", 9),
+                          fg="#34a853", bg="white")
+            dot.pack(side="left")
+            tk.Label(badge_frame, text=f"{i+1}", font=("Segoe UI", 9, "bold"),
+                   fg="#555", bg="white").pack(side="left")
+
+            # Email + folder
             text_info = tk.Frame(left, bg="white")
             text_info.pack(side="left")
 
-            tk.Label(text_info, text=p["folder"], font=("Segoe UI", 11, "bold"),
+            tk.Label(text_info, text=p["email"], font=("Segoe UI", 11, "bold"),
                    fg="#222", bg="white", anchor="w").pack(anchor="w")
-            tk.Label(text_info, text=p["email"], font=("Segoe UI", 9),
-                   fg="#666", bg="white", anchor="w").pack(anchor="w")
+            tk.Label(text_info, text=f"📁 {p['folder']}", font=("Segoe UI", 8),
+                   fg="#999", bg="white", anchor="w").pack(anchor="w")
 
             # Right: Open button
             btn = tk.Button(
-                card, text="Open", font=("Segoe UI", 10, "bold"),
+                card, text="Open Chrome", font=("Segoe UI", 10, "bold"),
                 bg="#1a73e8", fg="white", relief="flat",
                 activebackground="#1557b0", activeforeground="white",
-                padx=18, pady=4, cursor="hand2",
+                padx=16, pady=5, cursor="hand2",
                 command=lambda d=p["folder"]: open_profile(d)
             )
             btn.pack(side="right", padx=12, pady=10)
 
-        canvas.pack(side="left", fill="both", expand=True, padx=(0, 0))
+        canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
     # === Footer ===
     footer = tk.Frame(root, bg="#e8e8e8", height=30)
     footer.pack(side="bottom", fill="x")
     tk.Label(
-        footer, text="Made for fast profile switching",
+        footer, text="Only profiles with valid Google account shown",
         font=("Segoe UI", 8), fg="#999", bg="#e8e8e8"
     ).pack(pady=6)
 
