@@ -1,0 +1,10 @@
+# Chrome Profile Launcher - Dependencies
+# Ye sab Python ke saath built-in aate hain, alag se install nahi karna
+# tkinter (built-in)
+# json (built-in)
+# os (built-in)
+# subprocess (built-in)
+
+# Agar tkinter missing ho to:
+# Windows: Python reinstall karte waqt "tcl/tk and IDLE" check karein
+# ya: pip install tk
